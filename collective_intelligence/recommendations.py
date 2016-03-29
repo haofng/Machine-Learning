@@ -17,6 +17,19 @@ critics = {'Lisa Rose': {'Lady in the Water': 2.5, 'Snakes on a Plane': 3.5, 'Ju
            }
 
 
+# Returns a Tanimoto distance-based similarity score for person1 and person2
+def sim_tanimoto(prefs, person1, person2):
+    # Get the list of shared_items
+    si = {}
+    for item in prefs[person1]:
+        if item in prefs[person2]:
+            si[item] = 1
+
+    if len(si) == 0 or len(prefs[person1]) == 0 or len(prefs[person2]) == 0:
+        return 0
+    return len(si) / (len(prefs[person1])+len(prefs[person2])-len(si))
+
+
 # Returns a distance-based similarity score for person1 and person2
 def sim_distance(prefs, person1, person2):
     # Get the list of shared_items
@@ -86,13 +99,16 @@ def sim_pearson_alpha(prefs, p1, p2):
     y = [prefs[p2][it] for it in si]
     multi = [x[i] * y[i] for i in range(len(x))]
     cov = np.average(multi) - np.average(x)*np.average(y)
+    den = np.std(x)*np.std(y)
+    if den == 0:
+        return 0
 
-    return cov/(np.std(x)*np.std(y))
+    return cov/den
 
 
 # Return the best matches for person from the prefs dictionary.
 # Number of results and similarity function are optional params.
-def top_matches(prefs, person, n=5, similarity=sim_pearson_alpha):
+def top_matches(prefs, person, n=5, similarity=sim_tanimoto):
     scores = [(similarity(prefs, person, other), other) for other in prefs if other != person]
 
     # Sort the list so the hightest scores appear at the top
@@ -102,7 +118,7 @@ def top_matches(prefs, person, n=5, similarity=sim_pearson_alpha):
 
 
 # Gets recommendations for a person by using a weighted average of every other user's rankings
-def get_recommendations(prefs, person, similarity=sim_pearson_alpha):
+def get_recommendations(prefs, person, similarity=sim_tanimoto):
     totals = {}
     sim_sums = {}
     for other in prefs:
@@ -131,6 +147,70 @@ def get_recommendations(prefs, person, similarity=sim_pearson_alpha):
     return rankings
 
 
+# Gets recommendations for a person by using a weighted average of every other user's rankings
+def get_recommendations(prefs, person, similarity=sim_tanimoto):
+    totals = {}
+    sim_sums = {}
+    for other in prefs:
+        # dont't compare me to myself
+        if other == person:
+            continue
+        sim = similarity(prefs, person, other)
+
+        # ignore scores of zero or lower
+        if sim <= 0:
+            continue
+        for item in prefs[other]:
+            # only score movies I haven't seen yet
+            if item not in prefs[person] or prefs[person][item] == 0:
+                totals.setdefault(item, 0)
+                totals[item] += prefs[other][item]*sim
+                # Sum of similarities
+                sim_sums.setdefault(item, 0)
+                sim_sums[item] += sim
+    # Create the normalized list
+    rankings = [(total/sim_sums[item], item) for item, total in totals.items()]
+
+    # Return the sorted list
+    rankings.sort()
+    rankings.reverse()
+    return rankings
+
+
+def calculate_similar_items(prefs, n=10):
+    # Create a dictionary of items showing which other items they are most similar to
+    result = {}
+
+    # Invert the preference matrix to be item-centric
+    item_prefs = transform_prefs(prefs)
+    c = 0
+    for item in item_prefs:
+        # Status updates for large datasets
+        c += 1
+        if c % 100 == 0:
+            print "%d / %d" % (c, len(item_prefs))
+        # Find the most similar items to this one
+        scores = top_matches(item_prefs, item, n=n, similarity=sim_tanimoto)
+        result[item] = scores
+    return result
+
+
+def calculate_similar_users(prefs, n=5):
+    # Create a dictionary of users showing which other users they are most similar to
+    result = {}
+
+    c = 0
+    for user in prefs:
+        # Status updates for large datasets
+        c += 1
+        if c % 100 == 0:
+            print "%d / %d" % (c, len(prefs))
+        # Find the most similar user to this one
+        scores = top_matches(prefs, user, n=n, similarity=sim_pearson_alpha)
+        result[user] = scores
+    return result
+
+
 def transform_prefs(prefs):
     result = {}
     for person in prefs:
@@ -140,6 +220,53 @@ def transform_prefs(prefs):
             # Flip item and person
             result[item][person] = prefs[person][item]
     return result
+
+
+def load_movie_lens(path='./data/movielens'):
+
+    movies = {}
+    for line in open(path+'/u.item'):
+        (id, title) = line.split('|')[0:2]
+        movies[id] = title
+
+    prefs = {}
+    for line in open(path+'/u.data'):
+        (user, movieid, rating, ts) = line.split('\t')
+        prefs.setdefault(user, {})
+        prefs[user][movies[movieid]] = float(rating)
+    return prefs
+
+
+def get_recommended_items(prefs, item_match, user):
+    user_ratings = prefs[user]
+    scores = {}
+    total_sim = {}
+
+    # Loop over items rated by this user
+    for (item, rating) in user_ratings.items():
+
+        # Loop over items similar to this one
+        for (similarity, item2) in item_match[item]:
+
+            # Ignore if this user has already rated this item
+            if item2 in user_ratings or similarity == 0:
+                continue
+
+            # Weighted sum of rating times similarity
+            scores.setdefault(item2, 0)
+            scores[item2] += similarity*rating
+
+            # Sum of all the similarities
+            total_sim.setdefault(item2, 0)
+            total_sim[item2] += similarity
+
+    # Divide each total score by total weighting to get an average
+    rankings = [(score/total_sim[item], item) for item, score in scores.items()]
+
+    # Return the ranking from highest to lowest
+    rankings.sort()
+    rankings.reverse()
+    return rankings
 
 
 def main():
