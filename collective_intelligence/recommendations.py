@@ -27,7 +27,7 @@ def sim_tanimoto(prefs, person1, person2):
 
     if len(si) == 0 or len(prefs[person1]) == 0 or len(prefs[person2]) == 0:
         return 0
-    return len(si) / (len(prefs[person1])+len(prefs[person2])-len(si))
+    return float(len(si)) / (len(prefs[person1])+len(prefs[person2])-len(si))
 
 
 # Returns a distance-based similarity score for person1 and person2
@@ -147,36 +147,6 @@ def get_recommendations(prefs, person, similarity=sim_tanimoto):
     return rankings
 
 
-# Gets recommendations for a person by using a weighted average of every other user's rankings
-def get_recommendations(prefs, person, similarity=sim_tanimoto):
-    totals = {}
-    sim_sums = {}
-    for other in prefs:
-        # dont't compare me to myself
-        if other == person:
-            continue
-        sim = similarity(prefs, person, other)
-
-        # ignore scores of zero or lower
-        if sim <= 0:
-            continue
-        for item in prefs[other]:
-            # only score movies I haven't seen yet
-            if item not in prefs[person] or prefs[person][item] == 0:
-                totals.setdefault(item, 0)
-                totals[item] += prefs[other][item]*sim
-                # Sum of similarities
-                sim_sums.setdefault(item, 0)
-                sim_sums[item] += sim
-    # Create the normalized list
-    rankings = [(total/sim_sums[item], item) for item, total in totals.items()]
-
-    # Return the sorted list
-    rankings.sort()
-    rankings.reverse()
-    return rankings
-
-
 def calculate_similar_items(prefs, n=10):
     # Create a dictionary of items showing which other items they are most similar to
     result = {}
@@ -206,37 +176,12 @@ def calculate_similar_users(prefs, n=5):
         if c % 100 == 0:
             print "%d / %d" % (c, len(prefs))
         # Find the most similar user to this one
-        scores = top_matches(prefs, user, n=n, similarity=sim_pearson_alpha)
+        scores = top_matches(prefs, user, n=n, similarity=sim_tanimoto)
         result[user] = scores
     return result
 
 
-def transform_prefs(prefs):
-    result = {}
-    for person in prefs:
-        for item in prefs[person]:
-            result.setdefault(item, {})
-
-            # Flip item and person
-            result[item][person] = prefs[person][item]
-    return result
-
-
-def load_movie_lens(path='./data/movielens'):
-
-    movies = {}
-    for line in open(path+'/u.item'):
-        (id, title) = line.split('|')[0:2]
-        movies[id] = title
-
-    prefs = {}
-    for line in open(path+'/u.data'):
-        (user, movieid, rating, ts) = line.split('\t')
-        prefs.setdefault(user, {})
-        prefs[user][movies[movieid]] = float(rating)
-    return prefs
-
-
+# item_based prefs, item_match pre-calculated
 def get_recommended_items(prefs, item_match, user):
     user_ratings = prefs[user]
     scores = {}
@@ -269,14 +214,30 @@ def get_recommended_items(prefs, item_match, user):
     return rankings
 
 
-def main():
-    persons = [key for key in critics.iterkeys()]
-    matric_pearson = [[sim_pearson_alpha(critics, p1, p2) for p1 in persons] for p2 in persons]
-    matric_distance = [[sim_distance(critics, p1, p2) for p1 in persons] for p2 in persons]
-    print 'distance:'
-    print_matric(matric_distance)
-    print 'pearson:'
-    print_matric(matric_pearson)
+# user_based prefs, user_match pre_calculated
+def get_recommended_users(prefs, user_match, person):
+    totals = {}
+    sim_sums = {}
+    for (similarity, other) in user_match[person]:
+
+        # ignore scores of zero or lower
+        if similarity <= 0:
+            continue
+        for item in prefs[other]:
+            # only score movies I haven't seen yet
+            if item not in prefs[person] or prefs[person][item] == 0:
+                totals.setdefault(item, 0)
+                totals[item] += prefs[other][item]*similarity
+                # Sum of similarities
+                sim_sums.setdefault(item, 0)
+                sim_sums[item] += similarity
+    # Create the normalized list
+    rankings = [(total/sim_sums[item], item) for item, total in totals.items()]
+
+    # Return the sorted list
+    rankings.sort()
+    rankings.reverse()
+    return rankings
 
 
 def print_matric(matric):
@@ -287,5 +248,27 @@ def print_matric(matric):
         print ''
 
 
-if __name__ == '__main__':
-    main()
+def transform_prefs(prefs):
+    result = {}
+    for person in prefs:
+        for item in prefs[person]:
+            result.setdefault(item, {})
+
+            # Flip item and person
+            result[item][person] = prefs[person][item]
+    return result
+
+
+def load_movie_lens(path='./data/movielens'):
+
+    movies = {}
+    for line in open(path+'/u.item'):
+        (id, title) = line.split('|')[0:2]
+        movies[id] = title
+
+    prefs = {}
+    for line in open(path+'/u.data'):
+        (user, movieid, rating, ts) = line.split('\t')
+        prefs.setdefault(user, {})
+        prefs[user][movies[movieid]] = float(rating)
+    return prefs
