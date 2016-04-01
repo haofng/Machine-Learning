@@ -1,6 +1,8 @@
 from math import sqrt
 from PIL import Image, ImageDraw
 import numpy as np
+import random
+import matplotlib.pyplot as plt
 
 
 def readfile(filename):
@@ -18,6 +20,28 @@ def readfile(filename):
         data.append([float(x) for x in p[1:]])
 
     return rownames, colnames, data
+
+
+def manhattan(v1, v2):
+    return np.sum([abs(v1[i]-v2[i]) for i in range(len(v1))])
+
+
+def tanamoto(v1, v2):
+    c1, c2, shr = 0, 0, 0
+
+    for i in range(len(v1)):
+        if v1[i] != 0:
+            c1 += 1
+        if v2[i] != 0:
+            c2 += 1
+        if v1[i] != 0 and v2[i] != 0:
+            shr += 1
+
+    return 1.0-(float(shr)/(c1+c2-shr))
+
+
+def pythagorean(v1, v2):
+    return np.sqrt(np.sum([pow(v1[i]-v2[i], 2) for i in range(len(v1))]))
 
 
 def pearson(v1, v2):
@@ -176,9 +200,154 @@ def drawnode(draw, clust, x, y, scaling, labels):
         draw.text((x+5, y-7), labels[clust.id], (0, 0, 0))
 
 
+def rotatematrix(data):
+    newdata = []
+    for i in range(len(data[0])):
+        newrow = [data[j][i] for j in range(len(data))]
+        newdata.append(newrow)
+    return newdata
+
+
+def kcluster(rows, distance=pearson_alpha, k=4, iter=100):
+    # Determine the minimum and maximum values for each point
+    ranges = [(min([row[i] for row in rows]), max([row[i] for row in rows])) for i in range(len(rows[0]))]
+
+    # Create k randomly placed centroids
+    clusters = [[random.random()*(ranges[i][1]-ranges[i][0])+ranges[i][0] for i in range(len(rows[0]))] for j in range(k)]
+
+    lastmatches = []
+    for t in range(iter):
+        print 'Iteration %d' % t
+
+        bestmatches = [[] for i in range(k)]
+
+        # Find which centroid is the closest for each row
+        for j in range(len(rows)):
+            row = rows[j]
+            bestmatch = 0
+            for i in range(k):
+                d = distance(clusters[i], row)
+                if d < distance(clusters[bestmatch], row):
+                    bestmatch = i
+            bestmatches[bestmatch].append(j)
+
+        # If the results are the same as last time, this is complete
+        if bestmatches == lastmatches:
+            break
+        lastmatches = bestmatches
+
+        # Move the centroids to the average of their members
+        for i in range(k):
+            avgs = [0.0]*len(rows[0])
+            if len(bestmatches[i]) > 0:
+                for rowid in bestmatches[i]:
+                    for m in range(len(rows[rowid])):
+                        avgs[m] += rows[rowid][m]
+                for j in range(len(avgs)):
+                    avgs[j] /= len(bestmatches[i])
+                clusters[i] = avgs
+
+    return bestmatches
+
+
+def scaledown(data, distance=tanamoto, rate=0.01):
+    n = len(data)
+
+    # The real distances between every pair of items
+    realdist = [[distance(data[i], data[j]) for j in range(n)] for i in range(0, n)]
+
+    max = np.max([np.max(i) for i in realdist])
+    min = np.min([np.min(i) for i in realdist])
+    realdist = [[(realdist[i][j]-min)/(max-min) for j in range(n)] for i in range(n)]
+
+    # Randomly initialize of the starting points of the locations in 2D
+    loc = [[random.random(), random.random()] for i in range(n)]
+
+    fakedist = [[0.0 for j in range(n)] for i in range(n)]
+
+    lasterror = None
+    for m in range(0, 1000):
+
+        for i in range(n):
+            for j in range(n):
+                fakedist[i][j] = sqrt(sum([pow(loc[i][x]-loc[j][x], 2) for x in range(len(loc[i]))]))
+
+        # Move points
+        grad = [[0.0, 0.0] for i in range(n)]
+
+        totalerror = 0
+        for k in range(n):
+            for j in range(n):
+                if j == k:
+                    continue
+                # The error is percent difference between the distances
+                errorterm = (fakedist[j][k] - realdist[j][k])/realdist[j][k]
+                sign = 0
+                if fakedist[j][k] > realdist[j][k]:
+                    sign = 1
+                elif fakedist[j][k] < realdist[j][k]:
+                    sign = -1
+                # Each point needs to be moved away from or towards the other
+                # point in proportion to how much error it has
+                grad[k][0] += ((loc[k][0] - loc[j][0])/fakedist[j][k])*errorterm
+                grad[k][1] += ((loc[k][1] - loc[j][1])/fakedist[j][k])*errorterm
+
+                # Keep track of the total error
+                totalerror += abs(errorterm)
+        print totalerror
+
+        # If the answer got worse by moving the points, we are done
+        if lasterror and lasterror < totalerror:
+            break
+        lasterror = totalerror
+
+        # Move each of the points by the learning rate times the gradient
+        for k in range(n):
+            loc[k][0] -= rate*grad[k][0]
+            loc[k][1] -= rate*grad[k][1]
+        # if m % 10 == 0:
+        #     scatter(loc)
+
+    return loc
+
+
+def draw2d(data, labels, jpeg='mds2d.jpg'):
+    img = Image.new('RGB', (2000, 2000), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    for i in range(len(data)):
+        x = (data[i][0] + 0.5)*1000
+        y = (data[i][1] + 0.5)*1000
+        draw.text((x, y), labels[i], (0, 0, 0))
+    img.save(jpeg, 'JPEG')
+
+
+def scatter(loc):
+    m = len(loc)/2
+    x1 = [i[0] for i in loc[0:m]]
+    y1 = [i[1] for i in loc[0:m]]
+    x2 = [i[0] for i in loc[m:]]
+    y2 = [i[1] for i in loc[m:]]
+
+    plt.figure()
+    plt.scatter(x1, y1, c='r')
+    plt.scatter(x2, y2, c='b')
+    plt.show()
+
+
 def main():
-    blognames, word, data = readfile('blogdata.txt')
-    clust = hcluster(data)
+    # blognames, words, data = readfile('blogdata.txt')
+    # clust = hcluster(data)
+    # drawdendrogram(clust, labels=blognames, jpeg='blogclust.jpg')
+    # rdata = rotatematrix(data)
+    # wordclust = hcluster(rdata)
+    # drawdendrogram(wordclust, labels=words, jpeg='wordclust.jpg')
+    wants, people, data = readfile('zebo.txt')
+    clust = scaledown(data, distance=manhattan, rate=0.01)
+    draw2d(clust, wants, jpeg='wants2d.jpg')
+
+    # blognames, words, data = readfile('blogdata.txt')
+    # clust = scaledown(data, distance=pythagorean, rate=0.002)
+    # draw2d(clust, blognames, jpeg='blogs2d.jpg')
 
 
 if __name__ == '__main__':

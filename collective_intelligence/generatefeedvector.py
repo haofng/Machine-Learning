@@ -34,6 +34,7 @@ def getwords(html):
     return [word.lower() for word in words if word != '']
 
 
+# Generate a file contains blog-names, words and word frequency.
 def main():
     apcount = {}
     wordcounts = {}
